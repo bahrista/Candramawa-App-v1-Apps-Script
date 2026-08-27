@@ -1,0 +1,918 @@
+<script>
+  var allItems = [];
+  var allBrands = [];
+  var selectedBrand = '__all__';
+  var selectedYear = String(new Date().getFullYear());
+  var selectedMonth = String(new Date().getMonth() + 1);
+  var selectedTeam = '__all__';
+  var activeFilter = null;
+  var currentTab = 'home'; // Tab default saat pertama kali dibuka
+
+  var STATUS_PUBLISHED = 'Published';
+  var SESSION_STORAGE_KEY = 'cw_session_token';
+
+  var sessionToken = null;
+  var loggedInUser = null;
+  var chartsReady = false;
+  var isAuthenticated = false;
+
+  var MOBILE_BREAKPOINT = 768;
+  var sidebarCollapsed = false;
+  var mobileSidebarOpen = false;
+
+  google.charts.load('current', {packages:['corechart','bar']});
+  google.charts.setOnLoadCallback(function(){ chartsReady = true; tryStartApp(); });
+
+  /* Data cuma boleh mulai di-load kalau 2 syarat kepenuhan: user sudah login
+     DAN library Google Charts sudah selesai dimuat (dua proses ini async terpisah,
+     urutan selesainya gak bisa dipastikan). */
+  function tryStartApp(){
+    if (isAuthenticated && chartsReady){
+      loadData(false);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var savedToken = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!savedToken){
+      showLoginScreen();
+      return;
+    }
+    google.script.run
+      .withSuccessHandler(function(res){
+        if (res && res.ok){
+          onLoginSuccess(savedToken, res.fullName, res.username);
+        } else {
+          localStorage.removeItem(SESSION_STORAGE_KEY);
+          showLoginScreen();
+        }
+      })
+      .withFailureHandler(function(){
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        showLoginScreen();
+      })
+      .checkSession(savedToken);
+  });
+
+  /* =====================================================================
+     LOGIN & SESSION
+     ===================================================================== */
+  function showLoginScreen(){
+    document.getElementById('loginScreen').classList.remove('hidden');
+    document.getElementById('appShell').classList.add('hidden');
+  }
+
+  function handleLogin(){
+    var username = document.getElementById('loginUsername').value.trim();
+    var password = document.getElementById('loginPassword').value;
+    var errBox = document.getElementById('loginError');
+    errBox.classList.add('hidden');
+
+    if (!username || !password){
+      errBox.textContent = 'Username dan password wajib diisi.';
+      errBox.classList.remove('hidden');
+      return;
+    }
+
+    var btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    btn.textContent = 'Memeriksa...';
+
+    google.script.run
+      .withSuccessHandler(function(res){
+        btn.disabled = false;
+        btn.textContent = 'Masuk';
+        if (res.ok){
+          localStorage.setItem(SESSION_STORAGE_KEY, res.token);
+          onLoginSuccess(res.token, res.fullName, res.username);
+        } else {
+          errBox.textContent = res.error || 'Login gagal.';
+          errBox.classList.remove('hidden');
+        }
+      })
+      .withFailureHandler(function(err){
+        btn.disabled = false;
+        btn.textContent = 'Masuk';
+        errBox.textContent = 'Gagal terhubung ke server: ' + (err && err.message ? err.message : err);
+        errBox.classList.remove('hidden');
+      })
+      .login(username, password);
+  }
+
+  function onLoginSuccess(token, fullName, username){
+    sessionToken = token;
+    loggedInUser = { fullName: fullName, username: username };
+    isAuthenticated = true;
+
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appShell').classList.remove('hidden');
+    document.getElementById('loggedInUser').textContent = '👤 ' + fullName;
+    document.getElementById('homeWelcomeText').innerHTML =
+      'Selamat datang, <b>' + escapeHtml(fullName) + '</b> 👋 — ini pusat pemantauan konten dan performa tim untuk seluruh brand di bawah <b>Candramawa Group</b>. Gunakan tab <b>Content Calendar</b> untuk melihat jadwal publikasi, atau tab <b>Team Performance</b> untuk melihat workload dan ranking tim.';
+
+    // Tampilkan loading state dulu; loadData() beneran jalan begitu chartsReady juga true
+    document.getElementById('loadingState').classList.remove('hidden');
+    tryStartApp();
+  }
+
+  function handleLogout(){
+    google.script.run.logout(sessionToken);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    sessionToken = null;
+    loggedInUser = null;
+    isAuthenticated = false;
+    location.reload();
+  }
+
+  function loadData(forceRefresh){
+    document.getElementById('loadingState').classList.remove('hidden');
+    document.getElementById('errorState').classList.add('hidden');
+    document.getElementById('dashboardContent').classList.add('hidden');
+
+    google.script.run
+      .withSuccessHandler(onDataLoaded)
+      .withFailureHandler(onDataError)
+      .getContentPlanData(sessionToken, forceRefresh);
+  }
+
+  function onDataError(err){
+    document.getElementById('loadingState').classList.add('hidden');
+    var msg = err && err.message ? err.message : String(err);
+
+    if (msg.indexOf('UNAUTHORIZED') > -1){
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      showLoginScreen();
+      return;
+    }
+
+    var box = document.getElementById('errorState');
+    box.textContent = 'Gagal memuat data: ' + msg;
+    box.classList.remove('hidden');
+  }
+
+  function onDataLoaded(result){
+    allItems = result.items || [];
+    allBrands = result.brands || [];
+
+    document.getElementById('generatedAt').textContent =
+      'Total ' + allItems.length + ' konten dari ' + allBrands.length + ' brand · pembaruan: ' + new Date(result.generatedAt).toLocaleTimeString('id-ID');
+
+    document.getElementById('loadingState').classList.add('hidden');
+    document.getElementById('dashboardContent').classList.remove('hidden');
+
+    var warnBox = document.getElementById('warningsBox');
+    if (result.warnings && result.warnings.length > 0){
+      warnBox.innerHTML = '<b>⚠️ Beberapa brand tidak bisa dimuat penuh:</b>' +
+        result.warnings.map(function(w){ return '• ' + escapeHtml(w); }).join('<br>');
+      warnBox.classList.remove('hidden');
+    } else {
+      warnBox.classList.add('hidden');
+    }
+
+    renderBrandSelect();
+    renderYearSelect();
+    renderTeamSelect();
+    
+    document.getElementById('monthSelect').value = selectedMonth;
+    document.getElementById('yearSelect').value = selectedYear;
+
+    renderHomeTable(result.sources || []);
+    renderHomeStats();
+    renderAll();
+  }
+
+  /* =====================================================================
+     TAB HOME — 7 Card Statistik
+     ===================================================================== */
+  function getDateOffsetStr_(daysAgo){
+    var d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    var mm = ('0' + (d.getMonth() + 1)).slice(-2);
+    var dd = ('0' + d.getDate()).slice(-2);
+    return d.getFullYear() + '-' + mm + '-' + dd;
+  }
+
+  function renderHomeStats(){
+    var todayStr = getDateOffsetStr_(0);
+    var cutoffStr = getDateOffsetStr_(27); // 28 hari terakhir termasuk hari ini
+
+    var recentItems = allItems.filter(function(it){
+      return it.publishDate >= cutoffStr && it.publishDate <= todayStr;
+    });
+
+    var ownerAllCount = Object.keys(countIndividualBy('owner', allItems)).length;
+    var ownerRecentCount = Object.keys(countIndividualBy('owner', recentItems)).length;
+    var multiAllCount = Object.keys(countIndividualBy('multimediaCreator', allItems)).length;
+    var multiRecentCount = Object.keys(countIndividualBy('multimediaCreator', recentItems)).length;
+
+    var cards = [
+      { num: allItems.length, label: 'Total Content' },
+      { num: recentItems.length, label: 'Content 28 Hari Terakhir' },
+      { num: allBrands.length, label: 'Total Brand' },
+      { num: ownerAllCount, label: 'Total Content Owner' },
+      { num: ownerRecentCount, label: 'Content Owner Aktif 28 Hari' },
+      { num: multiAllCount, label: 'Total Multimedia' },
+      { num: multiRecentCount, label: 'Multimedia Aktif 28 Hari' }
+    ];
+
+    document.getElementById('homeStatsGrid').innerHTML = cards.map(function(c){
+      return '<div class="kpi-card"><div class="num">' + c.num + '</div><div class="label">' + c.label + '</div></div>';
+    }).join('');
+  }
+
+  var TAB_TITLES = {
+    home: '🏠 Home',
+    calendar: '📅 Content Calendar',
+    team: '📊 Team Performance',
+    setup: '⚙️ Setup'
+  };
+
+  function switchTab(tabName){
+    var buttons = {
+      home: document.getElementById('tabHomeBtn'),
+      calendar: document.getElementById('tabCalendarBtn'),
+      team: document.getElementById('tabTeamBtn'),
+      setup: document.getElementById('tabSetupBtn')
+    };
+    var views = {
+      home: document.getElementById('viewHome'),
+      calendar: document.getElementById('viewCalendar'),
+      team: document.getElementById('viewTeam'),
+      setup: document.getElementById('viewSetup')
+    };
+
+    Object.keys(buttons).forEach(function(key){
+      buttons[key].classList.toggle('active', key === tabName);
+      views[key].classList.toggle('hidden', key !== tabName);
+    });
+
+    // Filter global (Brand/Tahun/Bulan/Tim) cuma relevan untuk tab Content Calendar & Team Performance
+    document.getElementById('globalFilterSection').classList.toggle('hidden', tabName === 'home' || tabName === 'setup');
+    document.getElementById('pageTitle').textContent = TAB_TITLES[tabName] || '';
+
+    currentTab = tabName;
+
+    // Google Charts perlu di-redraw ulang setelah container-nya terlihat,
+    // supaya ukurannya kehitung dengan benar (sebelumnya 0px karena hidden).
+    if (tabName === 'calendar') renderCalendarView();
+    if (tabName === 'team'){ drawOwnerChart(); drawMultimediaChart(); }
+
+    // Di mobile, sidebar bersifat overlay -> otomatis nutup begitu user pilih menu.
+    if (window.innerWidth <= MOBILE_BREAKPOINT) closeMobileSidebar();
+  }
+
+  /* =====================================================================
+     SIDEBAR — Collapse (desktop, icon-only) & Slide-in Overlay (mobile)
+     ===================================================================== */
+  function toggleSidebarCollapse(){
+    sidebarCollapsed = !sidebarCollapsed;
+    document.getElementById('sidebar').classList.toggle('collapsed', sidebarCollapsed);
+    document.getElementById('collapseIcon').textContent = sidebarCollapsed ? '»' : '«';
+  }
+
+  function toggleMobileSidebar(){
+    mobileSidebarOpen = !mobileSidebarOpen;
+    applyMobileSidebarState_();
+  }
+
+  function closeMobileSidebar(){
+    if (!mobileSidebarOpen) return;
+    mobileSidebarOpen = false;
+    applyMobileSidebarState_();
+  }
+
+  function applyMobileSidebarState_(){
+    document.getElementById('sidebar').classList.toggle('mobile-open', mobileSidebarOpen);
+    document.getElementById('sidebarBackdrop').classList.toggle('show', mobileSidebarOpen);
+  }
+
+  // Kalau layar di-resize dari sempit ke lebar (desktop), pastikan overlay mobile ketutup
+  // biar gak nyangkut kebuka pas udah gak relevan lagi.
+  var resizeDebounceTimer_ = null;
+  window.addEventListener('resize', function(){
+    if (window.innerWidth > MOBILE_BREAKPOINT && mobileSidebarOpen){
+      closeMobileSidebar();
+    }
+
+    // Kalender perlu di-render ulang kalau lewat batas breakpoint mobile/desktop,
+    // karena tampilan badge & panjang judul beda di 2 mode itu. Di-debounce biar
+    // gak nge-render berkali-kali pas lagi proses drag-resize.
+    clearTimeout(resizeDebounceTimer_);
+    resizeDebounceTimer_ = setTimeout(function(){
+      if (currentTab === 'calendar') renderCalendarView();
+    }, 200);
+  });
+
+  /* Split Nama / Teks dengan Koma */
+  function splitValues(str){
+    if (!str || str === '-') return [];
+    return String(str).split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 0; });
+  }
+
+  function renderTeamSelect(){
+    var sel = document.getElementById('teamSelect');
+    var members = {};
+    allItems.forEach(function(it){
+      splitValues(it.owner).forEach(function(n){ members[n] = true; });
+      splitValues(it.multimediaCreator).forEach(function(n){ members[n] = true; });
+    });
+    var sorted = Object.keys(members).sort();
+    var html = '<option value="__all__">Semua Tim</option>';
+    sorted.forEach(function(m){
+      html += '<option value="'+escapeAttr(m)+'">'+escapeHtml(m)+'</option>';
+    });
+    sel.innerHTML = html;
+    sel.value = selectedTeam;
+  }
+
+  function renderBrandSelect(){
+    var sel = document.getElementById('brandSelect');
+    var html = '<option value="__all__">Semua Brand</option>';
+    allBrands.forEach(function(b){
+      html += '<option value="'+escapeAttr(b)+'">'+escapeHtml(b)+'</option>';
+    });
+    sel.innerHTML = html;
+    sel.value = selectedBrand;
+  }
+
+  function renderYearSelect(){
+    var sel = document.getElementById('yearSelect');
+    var years = {};
+    allItems.forEach(function(it){
+      var y = String(it.publishDate).split('-')[0];
+      if (y) years[y] = true;
+    });
+    years[selectedYear] = true;
+    var sortedYears = Object.keys(years).sort(function(a,b){ return b - a; });
+    var html = '';
+    sortedYears.forEach(function(y){
+      html += '<option value="'+y+'">'+y+'</option>';
+    });
+    sel.innerHTML = html;
+    sel.value = selectedYear;
+  }
+
+  function setBrand(b){ selectedBrand = b; activeFilter = null; renderAll(); }
+  function setYear(y){ selectedYear = y; activeFilter = null; renderAll(); }
+  function setMonth(m){ selectedMonth = m; activeFilter = null; renderAll(); }
+  function setTeam(t){ selectedTeam = t; activeFilter = null; renderAll(); }
+
+  function renderAll(){
+    renderKpis();
+    updateFilterChip();
+    drawOwnerChart();
+    drawMultimediaChart();
+    renderRankTable('owner', 'ownerRankBody');
+    renderRankTable('multimediaCreator', 'multimediaRankBody');
+    renderTable(getFilteredItems());
+    renderCalendarView();
+  }
+
+  /* =====================================================================
+     TAB HOME — Daftar Brand Aktif
+     ===================================================================== */
+  function renderHomeTable(sources){
+    var tbody = document.getElementById('homeSourcesBody');
+    if (!sources || sources.length === 0){
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--muted); padding:16px;">Belum ada brand aktif di sheet "Brand Sources".</td></tr>';
+      return;
+    }
+    tbody.innerHTML = sources.map(function(s, idx){
+      return '<tr>' +
+        '<td>'+(idx+1)+'</td>' +
+        '<td>'+escapeHtml(s.brand)+'</td>' +
+        '<td><a class="btn-link" href="'+escapeAttr(s.url)+'" target="_blank" rel="noopener">🔗 Buka Spreadsheet</a></td>' +
+        '<td>'+escapeHtml(s.sheetName)+'</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function getBrandScopedItems(){
+    return allItems.filter(function(it){
+      if (selectedBrand !== '__all__' && it.brand !== selectedBrand) return false;
+      
+      var parts = String(it.publishDate).split('-');
+      var y = parts[0];
+      var m = parseInt(parts[1], 10);
+
+      if (selectedYear !== '__all__' && y !== selectedYear) return false;
+      if (selectedMonth !== '__all__' && m !== parseInt(selectedMonth, 10)) return false;
+
+      if (selectedTeam !== '__all__'){
+        var owners = splitValues(it.owner);
+        var multi = splitValues(it.multimediaCreator);
+        var isMatch = owners.indexOf(selectedTeam) > -1 || multi.indexOf(selectedTeam) > -1;
+        if (!isMatch) return false;
+      }
+
+      return true;
+    });
+  }
+
+  function countIndividualBy(field, items){
+    var counts = {};
+    items.forEach(function(it){
+      var names = splitValues(it[field]);
+      names.forEach(function(name){
+        counts[name] = (counts[name] || 0) + 1;
+      });
+    });
+    return counts;
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function escapeAttr(s){ return escapeHtml(s).replace(/"/g,'&quot;'); }
+  function statusClass(status){ return 'status-' + String(status).replace(/\s+/g,''); }
+
+  /* Escape string biar aman disisipkan sebagai literal string JS ('...') di dalam atribut onclick="..." */
+  function jsStr_(str){ return escapeAttr(str).replace(/'/g, "\\'"); }
+
+  function formatDateID(dateStr){
+    var MONTH_SHORT = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+    var parts = dateStr.split('-');
+    return parseInt(parts[2],10) + ' ' + MONTH_SHORT[parseInt(parts[1],10)-1] + ' ' + parts[0];
+  }
+
+  function renderKpis(){
+    var scoped = getBrandScopedItems();
+    var total = scoped.length;
+    var published = scoped.filter(function(it){ return it.status === STATUS_PUBLISHED; }).length;
+    var ownerCount = Object.keys(countIndividualBy('owner', scoped)).length;
+    var multimediaCount = Object.keys(countIndividualBy('multimediaCreator', scoped)).length;
+
+    var MONTH_FULL = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    var scopeLabel = ' (' + MONTH_FULL[parseInt(selectedMonth,10)-1] + ' ' + selectedYear + ')';
+
+    var cards = [
+      {num:total, label:'Total Konten' + scopeLabel},
+      {num:published, label:'Published'},
+      {num:ownerCount, label:'Content Owner Aktif'},
+      {num:multimediaCount, label:'Multimedia Aktif'}
+    ];
+    document.getElementById('kpiRow').innerHTML = cards.map(function(c){
+      return '<div class="kpi-card"><div class="num">'+c.num+'</div><div class="label">'+c.label+'</div></div>';
+    }).join('');
+  }
+
+  function drawOwnerChart(){ drawWorkloadChart('chartOwner', 'owner'); }
+  function drawMultimediaChart(){ drawWorkloadChart('chartMultimedia', 'multimediaCreator'); }
+
+  function drawWorkloadChart(elementId, field){
+    var scoped = getBrandScopedItems();
+    var counts = countIndividualBy(field, scoped);
+    var keys = Object.keys(counts).sort(function(a,b){ return counts[b]-counts[a]; });
+    var rows = [['Nama','Jumlah', {role:'style'}]];
+    keys.forEach(function(k){
+      var isActive = activeFilter && activeFilter.type === field && activeFilter.value === k;
+      rows.push([k, counts[k], isActive ? '#1F3864' : '#9FB4D9']);
+    });
+    if (keys.length === 0) rows.push(['-', 0, '#9FB4D9']);
+
+    var data = google.visualization.arrayToDataTable(rows);
+    var chart = new google.visualization.BarChart(document.getElementById(elementId));
+    chart.draw(data, {
+      legend:{position:'none'},
+      chartArea:{width:'75%', height:'75%'},
+      colors:['#1F3864'],
+      hAxis:{textStyle:{fontSize:10}},
+      vAxis:{textStyle:{fontSize:10}, minValue:0}
+    });
+    google.visualization.events.addListener(chart, 'select', function(){
+      var sel = chart.getSelection();
+      if (sel.length > 0 && keys.length > 0){
+        applyFilter(field, keys[sel[0].row]);
+      }
+    });
+  }
+
+  function renderRankTable(field, tbodyId){
+    var scoped = getBrandScopedItems();
+    var grouped = {};
+
+    scoped.forEach(function(it){
+      var names = splitValues(it[field]);
+      names.forEach(function(name){
+        if (!grouped[name]) grouped[name] = {total:0, published:0, brands:{}};
+        grouped[name].total++;
+        if (it.status === STATUS_PUBLISHED) grouped[name].published++;
+        grouped[name].brands[it.brand] = true;
+      });
+    });
+
+    var names = Object.keys(grouped).sort(function(a,b){ return grouped[b].total - grouped[a].total; });
+    var tbody = document.getElementById(tbodyId);
+
+    if (names.length === 0){
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--muted); padding:16px;">Belum ada data.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = names.map(function(name){
+      var g = grouped[name];
+      var pct = g.total > 0 ? Math.round((g.published / g.total) * 100) : 0;
+      var brandList = Object.keys(g.brands).sort().join(', ');
+      var isActive = activeFilter && activeFilter.type === field && activeFilter.value === name;
+      return '<tr>' +
+        '<td><span class="clickable-name" onclick="applyFilter(\''+field+'\',\''+escapeAttr(name).replace(/'/g,"\\'")+'\')" style="'+(isActive?'text-decoration:underline;':'')+'">'+escapeHtml(name)+'</span></td>' +
+        '<td class="num-col">'+g.total+'</td>' +
+        '<td class="num-col">'+g.published+'</td>' +
+        '<td><div class="pct-label">'+pct+'%</div><div class="pct-bar-outer"><div class="pct-bar-inner" style="width:'+pct+'%;"></div></div></td>' +
+        '<td>'+brandList.split(', ').map(function(b){ return '<span class="brand-pill">'+escapeHtml(b)+'</span>'; }).join(' ')+'</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function applyFilter(type, value){
+    if (activeFilter && activeFilter.type === type && activeFilter.value === value){
+      activeFilter = null;
+    } else {
+      activeFilter = {type:type, value:value};
+    }
+    updateFilterChip();
+    drawOwnerChart();
+    drawMultimediaChart();
+    renderRankTable('owner', 'ownerRankBody');
+    renderRankTable('multimediaCreator', 'multimediaRankBody');
+    renderTable(getFilteredItems());
+  }
+
+  function clearFilter(){
+    activeFilter = null;
+    updateFilterChip();
+    drawOwnerChart();
+    drawMultimediaChart();
+    renderRankTable('owner', 'ownerRankBody');
+    renderRankTable('multimediaCreator', 'multimediaRankBody');
+    renderTable(getFilteredItems());
+  }
+
+  function updateFilterChip(){
+    var chip = document.getElementById('filterChip');
+    var btn = document.getElementById('clearFilterBtn');
+    if (activeFilter){
+      var labelMap = {owner:'Content Owner', multimediaCreator:'Multimedia Creator'};
+      chip.textContent = 'Filter Bar Spesifik: ' + (labelMap[activeFilter.type]||activeFilter.type) + ' = ' + activeFilter.value;
+      chip.classList.remove('hidden');
+      btn.classList.remove('hidden');
+    } else {
+      chip.classList.add('hidden');
+      btn.classList.add('hidden');
+    }
+  }
+
+  function getFilteredItems(){
+    var base = getBrandScopedItems();
+    if (!activeFilter) return base;
+    return base.filter(function(it){
+      var names = splitValues(it[activeFilter.type]);
+      return names.indexOf(activeFilter.value) > -1;
+    });
+  }
+
+  /* Tabel Detail Konten (di tab Content Calendar) — kolom Format ditambahkan setelah Judul,
+     dan diurutkan ASC berdasarkan Tanggal (bukan lagi terbaru dulu). */
+  function renderTable(items){
+    var tbody = document.getElementById('tableBody');
+    var empty = document.getElementById('tableEmpty');
+    if (items.length === 0){
+      tbody.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    var sorted = items.slice().sort(function(a,b){ return a.publishDate.localeCompare(b.publishDate); }); // ASC
+    tbody.innerHTML = sorted.map(function(it){
+      return '<tr>' +
+        '<td><span class="brand-pill">'+escapeHtml(it.brand)+'</span></td>' +
+        '<td>'+formatDateID(it.publishDate)+'</td>' +
+        '<td>'+escapeHtml(it.title)+'</td>' +
+        '<td>'+escapeHtml(it.format)+'</td>' +
+        '<td><span class="status-pill '+statusClass(it.status)+'">'+escapeHtml(it.status)+'</span></td>' +
+        '<td>'+escapeHtml(it.owner)+'</td>' +
+        '<td>'+escapeHtml(it.multimediaCreator)+'</td>' +
+        '<td><button class="btn-icon" title="Edit" onclick="openEditContentModal(\''+jsStr_(it.brand)+'\', '+it.row+')">✏️</button></td>' +
+        '<td><button class="btn-icon btn-icon-danger" title="Hapus" onclick="confirmDeleteContent(\''+jsStr_(it.brand)+'\', '+it.row+', \''+jsStr_(it.title)+'\')">🗑️</button></td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  /* =====================================================================
+     SECTION CONTENT CALENDAR & STATISTIK
+     ===================================================================== */
+  
+  function renderCalendarView(){
+    var scoped = getBrandScopedItems();
+    renderCalendarGrid(scoped);
+    renderCalendarStats(scoped);
+  }
+
+  function renderCalendarGrid(scoped){
+    var container = document.getElementById('calendarBody');
+    if (!container) return;
+
+    var year = parseInt(selectedYear, 10);
+    var month = parseInt(selectedMonth, 10) - 1;
+
+    var firstDay = new Date(year, month, 1);
+    var lastDay = new Date(year, month + 1, 0);
+
+    var startDayIdx = (firstDay.getDay() + 6) % 7;
+    var totalDays = lastDay.getDate();
+
+    var MONTH_FULL = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    document.getElementById('calendarTitle').textContent = '📅 Content Calendar — ' + MONTH_FULL[month] + ' ' + year;
+
+    var html = '';
+
+    for(var i = 0; i < startDayIdx; i++){
+      html += '<div class="cal-day-cell other-month"></div>';
+    }
+
+    for(var day = 1; day <= totalDays; day++){
+      var dateStr = year + '-' + (month + 1 < 10 ? '0' + (month + 1) : month + 1) + '-' + (day < 10 ? '0' + day : day);
+      var dayItems = scoped.filter(function(it){ return it.publishDate === dateStr; });
+
+      html += '<div class="cal-day-cell">';
+      html += '<span class="cal-day-num">' + day + '</span>';
+
+      // Biar kotak tanggal gak sesak: cuma tampilin 1 item kontennya.
+      // Di mobile: judul dipotong super pendek + badge SELALU muncul (walau cuma 1 konten)
+      // sebagai satu-satunya cara buka detail lengkap lewat modal.
+      // Di desktop: judul full ditampilkan, badge cuma muncul kalau ada konten lain yang tersembunyi.
+      if (dayItems.length > 0){
+        var isMobileView = window.innerWidth <= MOBILE_BREAKPOINT;
+
+        if (isMobileView){
+          html += renderCalItemHtml_(dayItems[0], true);
+          html += '<button class="cal-more-badge" onclick="openDayModal(\'' + dateStr + '\')">👁 ' + dayItems.length + '</button>';
+        } else {
+          html += renderCalItemHtml_(dayItems[0]);
+          if (dayItems.length > 1){
+            html += '<button class="cal-more-badge" onclick="openDayModal(\'' + dateStr + '\')">+' + (dayItems.length - 1) + '</button>';
+          }
+        }
+      }
+
+      html += '</div>';
+    }
+
+    container.innerHTML = html;
+  }
+
+  function truncateText_(text, maxChars){
+    text = String(text || '');
+    if (text.length <= maxChars) return text;
+    return text.substring(0, maxChars) + '…';
+  }
+
+  /* Render 1 kotak konten kalender (dipakai di grid kalender & di modal popup).
+     truncateTitle = true khusus dipakai versi mobile di grid kalender, biar judul
+     panjang gak bikin kotak tanggal menumpuk/berantakan. Modal popup selalu full text. */
+  function renderCalItemHtml_(it, truncateTitle){
+    var statusClass = '';
+    var st = (it.status || '').toLowerCase();
+    if (st === 'published') statusClass = 'is-published';
+    else if (st === 'ready to post' || st === 'scheduled') statusClass = 'is-ready';
+    else if (st === 'review' || st === 'revisi') statusClass = 'is-review';
+
+    if (truncateTitle){
+      // Preview singkat aja, detail lengkapnya buka lewat badge -> modal
+      var shortTitle = escapeHtml(truncateText_(it.title, 5));
+      return '<div class="cal-item ' + statusClass + '">' + shortTitle + '</div>';
+    }
+
+    // Tautan Brief (jika ada link, judul bisa diklik)
+    var titleContent = escapeHtml(it.title);
+    if (it.brief && it.brief !== '-' && (it.brief.indexOf('http://') === 0 || it.brief.indexOf('https://') === 0)){
+      titleContent = '<a href="' + escapeAttr(it.brief) + '" target="_blank" title="Buka Brief">' + escapeHtml(it.title) + ' 🔗</a>';
+    }
+
+    return '<div class="cal-item ' + statusClass + '"><b>[' + escapeHtml(it.brand) + ']</b> ' + titleContent + '</div>';
+  }
+
+  /* Modal popup: daftar LENGKAP semua konten di 1 tanggal (dipicu badge) — selalu full text, gak dipotong */
+  function openDayModal(dateStr){
+    var scoped = getBrandScopedItems();
+    var dayItems = scoped.filter(function(it){ return it.publishDate === dateStr; });
+
+    document.getElementById('dayModalTitle').textContent = '📅 Konten — ' + formatDateID(dateStr);
+    document.getElementById('dayModalBody').innerHTML = dayItems.length === 0
+      ? '<div style="text-align:center; color:var(--muted); padding:20px;">Tidak ada konten.</div>'
+      : dayItems.map(function(it){ return renderCalItemHtml_(it); }).join(''); // wrap biar index dari .map() gak ke-anggep truncateTitle
+
+    document.getElementById('dayModalOverlay').classList.remove('hidden');
+  }
+
+  function closeDayModal(){
+    document.getElementById('dayModalOverlay').classList.add('hidden');
+  }
+
+  /* =====================================================================
+     MODAL: TAMBAH / EDIT KONTEN
+     ===================================================================== */
+
+  function populateContentFormBrandOptions_(){
+    var sel = document.getElementById('contentFormBrand');
+    sel.innerHTML = allBrands.map(function(b){
+      return '<option value="'+escapeAttr(b)+'">'+escapeHtml(b)+'</option>';
+    }).join('');
+  }
+
+  function resetContentForm_(){
+    document.getElementById('contentFormError').classList.add('hidden');
+    document.getElementById('contentFormRow').value = '';
+    document.getElementById('contentFormBrand').disabled = false;
+    document.getElementById('contentFormPublishDate').value = '';
+    document.getElementById('contentFormTitle').value = '';
+    document.getElementById('contentFormStatus').value = '';
+    document.getElementById('contentFormPilar').value = '';
+    document.getElementById('contentFormFormat').value = '';
+    document.getElementById('contentFormChannel').value = '';
+    document.getElementById('contentFormReference').value = '';
+    document.getElementById('contentFormBrief').value = '';
+    document.getElementById('contentFormOwner').value = '';
+    document.getElementById('contentFormMultimediaCreator').value = '';
+    document.getElementById('contentFormCaption').value = '';
+    document.getElementById('contentFormMultimediaAsset').value = '';
+  }
+
+  function openAddContentModal(){
+    populateContentFormBrandOptions_();
+    resetContentForm_();
+    document.getElementById('contentModalTitle').textContent = '➕ Tambah Konten';
+    document.getElementById('contentModalOverlay').classList.remove('hidden');
+  }
+
+  function openEditContentModal(brand, row){
+    var item = allItems.find(function(it){ return it.brand === brand && it.row === row; });
+    if (!item){
+      alert('Data konten ini gak ketemu (mungkin sudah berubah). Coba Refresh Data dulu.');
+      return;
+    }
+
+    populateContentFormBrandOptions_();
+    resetContentForm_();
+
+    document.getElementById('contentModalTitle').textContent = '✏️ Edit Konten';
+    document.getElementById('contentFormRow').value = row;
+    document.getElementById('contentFormBrand').value = brand;
+    document.getElementById('contentFormBrand').disabled = true; // brand gak bisa diubah saat edit
+    document.getElementById('contentFormPublishDate').value = item.publishDate;
+    document.getElementById('contentFormTitle').value = item.title === '(Tanpa Judul)' ? '' : item.title;
+    document.getElementById('contentFormStatus').value = item.status === '-' ? '' : item.status;
+    document.getElementById('contentFormPilar').value = item.pilar === '-' ? '' : item.pilar;
+    document.getElementById('contentFormFormat').value = item.format === '-' ? '' : item.format;
+    document.getElementById('contentFormChannel').value = item.channel === '-' ? '' : item.channel;
+    document.getElementById('contentFormReference').value = item.reference === '-' ? '' : item.reference;
+    document.getElementById('contentFormBrief').value = item.brief === '-' ? '' : item.brief;
+    document.getElementById('contentFormOwner').value = item.owner === '-' ? '' : item.owner;
+    document.getElementById('contentFormMultimediaCreator').value = item.multimediaCreator === '-' ? '' : item.multimediaCreator;
+    document.getElementById('contentFormCaption').value = item.caption === '-' ? '' : item.caption;
+    document.getElementById('contentFormMultimediaAsset').value = item.multimedia === '-' ? '' : item.multimedia;
+
+    document.getElementById('contentModalOverlay').classList.remove('hidden');
+  }
+
+  function closeContentModal(){
+    document.getElementById('contentModalOverlay').classList.add('hidden');
+  }
+
+  function submitContentForm(){
+    var errBox = document.getElementById('contentFormError');
+    errBox.classList.add('hidden');
+
+    var rowValue = document.getElementById('contentFormRow').value;
+    var isEdit = rowValue !== '';
+
+    var payload = {
+      brand: document.getElementById('contentFormBrand').value,
+      publishDate: document.getElementById('contentFormPublishDate').value,
+      title: document.getElementById('contentFormTitle').value.trim(),
+      status: document.getElementById('contentFormStatus').value,
+      pilar: document.getElementById('contentFormPilar').value.trim(),
+      format: document.getElementById('contentFormFormat').value.trim(),
+      channel: document.getElementById('contentFormChannel').value.trim(),
+      reference: document.getElementById('contentFormReference').value.trim(),
+      brief: document.getElementById('contentFormBrief').value.trim(),
+      owner: document.getElementById('contentFormOwner').value.trim(),
+      multimediaCreator: document.getElementById('contentFormMultimediaCreator').value.trim(),
+      caption: document.getElementById('contentFormCaption').value.trim(),
+      multimedia: document.getElementById('contentFormMultimediaAsset').value.trim()
+    };
+    if (isEdit) payload.row = parseInt(rowValue, 10);
+
+    if (!payload.brand || !payload.publishDate || !payload.title){
+      errBox.textContent = 'Brand, Publish Date, dan Title wajib diisi.';
+      errBox.classList.remove('hidden');
+      return;
+    }
+
+    var btn = document.getElementById('contentFormSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Menyimpan...';
+
+    var handler = isEdit ? 'updateContentItem' : 'addContentItem';
+
+    google.script.run
+      .withSuccessHandler(function(res){
+        btn.disabled = false;
+        btn.textContent = 'Simpan';
+        if (res.ok){
+          closeContentModal();
+          loadData(true); // paksa refresh biar data & nomor baris ter-update
+        } else {
+          errBox.textContent = res.error || 'Gagal menyimpan konten.';
+          errBox.classList.remove('hidden');
+        }
+      })
+      .withFailureHandler(function(err){
+        btn.disabled = false;
+        btn.textContent = 'Simpan';
+        errBox.textContent = 'Terjadi kesalahan: ' + (err && err.message ? err.message : err);
+        errBox.classList.remove('hidden');
+      })[handler](sessionToken, payload);
+  }
+
+  function confirmDeleteContent(brand, row, title){
+    var confirmed = confirm('Yakin ingin menghapus konten "' + title + '"? Tindakan ini tidak bisa dibatalkan.');
+    if (!confirmed) return;
+
+    google.script.run
+      .withSuccessHandler(function(res){
+        if (res.ok){
+          loadData(true);
+        } else {
+          alert('Gagal menghapus: ' + (res.error || 'Terjadi kesalahan.'));
+        }
+      })
+      .withFailureHandler(function(err){
+        alert('Terjadi kesalahan: ' + (err && err.message ? err.message : err));
+      })
+      .deleteContentItem(sessionToken, { brand: brand, row: row });
+  }
+
+  /* Render Visualisasi Grafik Statistik Konten */
+  function renderCalendarStats(scoped){
+    // 1. Jumlah Konten per Bulan (Batang)
+    var MONTH_SHORT = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+    var monthCounts = Array(12).fill(0);
+    
+    // Ambil data dari brand & year terpilih (lintas bulan)
+    var yearItems = allItems.filter(function(it){
+      if (selectedBrand !== '__all__' && it.brand !== selectedBrand) return false;
+      return String(it.publishDate).split('-')[0] === selectedYear;
+    });
+
+    yearItems.forEach(function(it){
+      var m = parseInt(it.publishDate.split('-')[1], 10) - 1;
+      if (m >= 0 && m < 12) monthCounts[m]++;
+    });
+
+    var rowsMonth = [['Bulan', 'Jumlah']];
+    MONTH_SHORT.forEach(function(mStr, idx){ rowsMonth.push([mStr, monthCounts[idx]]); });
+    var dataMonth = google.visualization.arrayToDataTable(rowsMonth);
+    new google.visualization.ColumnChart(document.getElementById('chartCalMonth')).draw(dataMonth, {
+      legend:{position:'none'}, colors:['#1F3864'], chartArea:{width:'80%', height:'70%'}
+    });
+
+    // 2. Jumlah Konten per Format (Pie Chart dengan split)
+    var formatCounts = countIndividualBy('format', scoped);
+    var rowsFormat = [['Format', 'Jumlah']];
+    Object.keys(formatCounts).forEach(function(k){ rowsFormat.push([k, formatCounts[k]]); });
+    if (rowsFormat.length === 1) rowsFormat.push(['Tidak ada data', 0]);
+    new google.visualization.PieChart(document.getElementById('chartCalFormat')).draw(google.visualization.arrayToDataTable(rowsFormat), {
+      chartArea:{width:'90%', height:'80%'}, pieHole: 0.3
+    });
+
+    // 3. Jumlah Konten per Pilar (Pie Chart)
+    var pilarCounts = countIndividualBy('pilar', scoped);
+    var rowsPilar = [['Pilar', 'Jumlah']];
+    Object.keys(pilarCounts).forEach(function(k){ rowsPilar.push([k, pilarCounts[k]]); });
+    if (rowsPilar.length === 1) rowsPilar.push(['Tidak ada data', 0]);
+    new google.visualization.PieChart(document.getElementById('chartCalPillar')).draw(google.visualization.arrayToDataTable(rowsPilar), {
+      chartArea:{width:'90%', height:'80%'}
+    });
+
+    // 4. Jumlah Konten per Channel (Bar Horizontal dengan split)
+    var channelCounts = countIndividualBy('channel', scoped);
+    var rowsChannel = [['Channel', 'Jumlah']];
+    Object.keys(channelCounts).forEach(function(k){ rowsChannel.push([k, channelCounts[k]]); });
+    if (rowsChannel.length === 1) rowsChannel.push(['-', 0]);
+    new google.visualization.BarChart(document.getElementById('chartCalChannel')).draw(google.visualization.arrayToDataTable(rowsChannel), {
+      legend:{position:'none'}, colors:['#2E5395'], chartArea:{width:'70%', height:'75%'}
+    });
+
+    // 5. Status Progres Konten (Bar Horizontal)
+    var statusCounts = countIndividualBy('status', scoped);
+    var rowsStatus = [['Status', 'Jumlah']];
+    Object.keys(statusCounts).forEach(function(k){ rowsStatus.push([k, statusCounts[k]]); });
+    if (rowsStatus.length === 1) rowsStatus.push(['-', 0]);
+    new google.visualization.BarChart(document.getElementById('chartCalStatus')).draw(google.visualization.arrayToDataTable(rowsStatus), {
+      legend:{position:'none'}, colors:['#9FB4D9'], chartArea:{width:'80%', height:'75%'}
+    });
+  }
+</script>

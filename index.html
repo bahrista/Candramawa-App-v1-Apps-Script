@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <script src="https://www.gstatic.com/charts/loader.js"></script>
+
+  <!-- Memanggil CSS dari file style.html -->
+  <?!= include('style'); ?>
+</head>
+<body>
+
+  <!-- LAYAR LOGIN -->
+  <div id="loginScreen">
+    <div id="loginBox">
+      <h1>🔐 Candramawa Apps</h1>
+      <p class="login-sub">Masuk dengan akun yang terdaftar untuk melanjutkan.</p>
+      <div id="loginError" class="hidden"></div>
+      <label for="loginUsername">Username</label>
+      <input type="text" id="loginUsername" autocomplete="username" onkeydown="if(event.key==='Enter') handleLogin();">
+      <label for="loginPassword">Password</label>
+      <input type="password" id="loginPassword" autocomplete="current-password" onkeydown="if(event.key==='Enter') handleLogin();">
+      <button id="loginBtn" onclick="handleLogin()">Masuk</button>
+    </div>
+  </div>
+
+  <!-- APLIKASI (baru terlihat setelah login berhasil) -->
+  <div id="appShell" class="hidden">
+
+    <div id="sidebarBackdrop" onclick="closeMobileSidebar()"></div>
+
+    <aside id="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-icon">🏢</span> <span class="brand-text"><?= dashboardTitle ?></span>
+      </div>
+      <nav id="sidebarNav">
+        <button class="side-link active" id="tabHomeBtn" onclick="switchTab('home')"><span class="side-icon">🏠</span><span class="side-label"> Home</span></button>
+        <button class="side-link" id="tabCalendarBtn" onclick="switchTab('calendar')"><span class="side-icon">📅</span><span class="side-label"> Content Calendar</span></button>
+        <button class="side-link" id="tabTeamBtn" onclick="switchTab('team')"><span class="side-icon">📊</span><span class="side-label"> Team Performance</span></button>
+        <button class="side-link" id="tabSetupBtn" onclick="switchTab('setup')"><span class="side-icon">⚙️</span><span class="side-label"> Setup</span></button>
+      </nav>
+      <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebarCollapse()">
+        <span id="collapseIcon">«</span><span class="collapse-label"> Collapse Menu</span>
+      </button>
+    </aside>
+
+    <div id="mainArea">
+      <div id="topbar">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button class="hamburger-btn" id="hamburgerBtn" onclick="toggleMobileSidebar()">☰</button>
+          <div>
+            <h1 id="pageTitle">🏠 Home</h1>
+            <div class="sub" id="generatedAt">Memuat data...</div>
+          </div>
+        </div>
+        <div id="topbarRight">
+          <span id="loggedInUser"></span>
+          <button id="refreshBtn" onclick="loadData(true)">↻ Refresh Data</button>
+          <button id="logoutBtn" onclick="handleLogout()">Keluar</button>
+        </div>
+      </div>
+
+      <main>
+        <div id="loadingState">Memuat data dari semua brand...</div>
+        <div id="errorState"></div>
+
+        <div id="dashboardContent" class="hidden">
+          <div id="warningsBox" class="hidden"></div>
+
+          <!-- Controls Filter Global (relevan untuk tab Content Calendar & Team Performance) -->
+          <div class="section hidden" id="globalFilterSection">
+            <div id="brandFilterRow">
+              <h2 style="margin:0;">🏢 Filter Utama</h2>
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <div class="filter-group">
+                  <label for="brandSelect">Brand:</label>
+                  <select id="brandSelect" onchange="setBrand(this.value)">
+                    <option value="__all__">Semua Brand</option>
+                  </select>
+                </div>
+                <div class="filter-group">
+                  <label for="yearSelect">Tahun:</label>
+                  <select id="yearSelect" onchange="setYear(this.value)"></select>
+                </div>
+                <div class="filter-group">
+                  <label for="monthSelect">Bulan:</label>
+                  <select id="monthSelect" onchange="setMonth(this.value)">
+                    <option value="1">Januari</option>
+                    <option value="2">Februari</option>
+                    <option value="3">Maret</option>
+                    <option value="4">April</option>
+                    <option value="5">Mei</option>
+                    <option value="6">Juni</option>
+                    <option value="7">Juli</option>
+                    <option value="8">Agustus</option>
+                    <option value="9">September</option>
+                    <option value="10">Oktober</option>
+                    <option value="11">November</option>
+                    <option value="12">Desember</option>
+                  </select>
+                </div>
+                <div class="filter-group">
+                  <label for="teamSelect">Team Member:</label>
+                  <select id="teamSelect" onchange="setTeam(this.value)">
+                    <option value="__all__">Semua Tim</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 1: HOME -->
+          <div id="viewHome">
+            <div class="section" id="homeWelcome">
+              <h2>👋 Selamat Datang</h2>
+              <p id="homeWelcomeText">Selamat datang di <b>Candramawa Apps</b> — pusat pemantauan konten dan performa tim untuk seluruh brand di bawah Candramawa Group.</p>
+            </div>
+
+            <div class="section">
+              <h2>📊 Ringkasan</h2>
+              <div id="homeStatsGrid" class="home-stats-grid"></div>
+            </div>
+
+            <!-- Banner info update/fitur baru — isinya ada di file terpisah update.html -->
+            <?!= include('update'); ?>
+          </div>
+
+          <!-- TAB 2: CONTENT CALENDAR -->
+          <div id="viewCalendar" class="hidden">
+
+            <!-- SECTION KALENDER -->
+            <div class="section">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                  <h2 id="calendarTitle" style="margin:0;">📅 Content Calendar</h2>
+                  <button class="btn-primary" onclick="openAddContentModal()">➕ Tambah Konten</button>
+                </div>
+
+                <!-- Legend Warna -->
+                <div class="legend-container">
+                  <div class="legend-item"><span class="legend-box legend-published"></span> Published</div>
+                  <div class="legend-item"><span class="legend-box legend-ready"></span> Ready to Post / Scheduled</div>
+                  <div class="legend-item"><span class="legend-box legend-review"></span> Review / Revisi</div>
+                  <div class="legend-item"><span class="legend-box legend-draft"></span> Draft / Planned</div>
+                </div>
+              </div>
+
+              <div class="calendar-grid" id="calendarHead">
+                <div class="cal-day-head">Senin</div>
+                <div class="cal-day-head">Selasa</div>
+                <div class="cal-day-head">Rabu</div>
+                <div class="cal-day-head">Kamis</div>
+                <div class="cal-day-head">Jumat</div>
+                <div class="cal-day-head">Sabtu</div>
+                <div class="cal-day-head">Minggu</div>
+              </div>
+              <div class="calendar-grid" id="calendarBody"></div>
+            </div>
+
+            <!-- SECTION STATISTIK KONTEN -->
+            <div class="section">
+              <h2>📊 Statistik Konten <span style="font-weight:normal; font-size:12px; color:var(--muted);">(Bulan & Tahun terpilih)</span></h2>
+              <div class="cal-stats-grid">
+                <div class="chart-box">
+                  <h3>Jumlah Konten per Bulan</h3>
+                  <div id="chartCalMonth" class="chart-canvas-sm"></div>
+                </div>
+                <div class="chart-box">
+                  <h3>Jumlah Konten per Format</h3>
+                  <div id="chartCalFormat" class="chart-canvas-sm"></div>
+                </div>
+                <div class="chart-box">
+                  <h3>Jumlah Konten per Pilar</h3>
+                  <div id="chartCalPillar" class="chart-canvas-sm"></div>
+                </div>
+                <div class="chart-box">
+                  <h3>Jumlah Konten per Channel</h3>
+                  <div id="chartCalChannel" class="chart-canvas-sm"></div>
+                </div>
+                <div class="chart-box" style="grid-column: span 2;">
+                  <h3>Status Progres Konten</h3>
+                  <div id="chartCalStatus" class="chart-canvas-sm"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SECTION DETAIL KONTEN -->
+            <div class="section">
+              <h2>📋 Detail Konten</h2>
+              <div id="filterBar">
+                <span id="filterChip" class="hidden"></span>
+                <button id="clearFilterBtn" class="hidden" onclick="clearFilter()">✕ Hapus Filter Spesifik</button>
+              </div>
+              <div style="max-height:420px; overflow:auto;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Brand</th>
+                      <th>Tanggal</th>
+                      <th>Judul</th>
+                      <th>Format</th>
+                      <th>Status</th>
+                      <th>Content Owner</th>
+                      <th>Multimedia Creator</th>
+                      <th>Edit</th>
+                      <th>Hapus</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tableBody"></tbody>
+                </table>
+                <div id="tableEmpty" class="hidden">Tidak ada konten untuk filter ini.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 3: TEAM PERFORMANCE -->
+          <div id="viewTeam" class="hidden">
+            <div id="kpiRow"></div>
+
+            <div class="section">
+              <div id="chartsGrid">
+                <div class="chart-box">
+                  <h3>Jumlah Konten per Content Owner</h3>
+                  <div class="chart-hint">Klik bar untuk filter detail</div>
+                  <div id="chartOwner" class="chart-canvas"></div>
+                </div>
+                <div class="chart-box">
+                  <h3>Jumlah Konten per Multimedia Creator</h3>
+                  <div class="chart-hint">Klik bar untuk filter detail</div>
+                  <div id="chartMultimedia" class="chart-canvas"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <h2>🏆 Ranking Performa — Content Owner</h2>
+              <div class="rank-table-wrap">
+                <table class="rank-table">
+                  <thead>
+                    <tr>
+                      <th>Nama</th>
+                      <th style="text-align:center;">Total Konten</th>
+                      <th style="text-align:center;">Published</th>
+                      <th>% Published</th>
+                      <th>Brand</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ownerRankBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="section">
+              <h2>🏆 Ranking Performa — Multimedia Creator</h2>
+              <div class="rank-table-wrap">
+                <table class="rank-table">
+                  <thead>
+                    <tr>
+                      <th>Nama</th>
+                      <th style="text-align:center;">Total Konten</th>
+                      <th style="text-align:center;">Published</th>
+                      <th>% Published</th>
+                      <th>Brand</th>
+                    </tr>
+                  </thead>
+                  <tbody id="multimediaRankBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 4: SETUP -->
+          <div id="viewSetup" class="hidden">
+            <div class="section">
+              <h2>🏢 Brand Terhubung</h2>
+              <p style="font-size:12px; color:var(--muted); margin:-6px 0 14px 0;">Fitur tambah/edit brand langsung dari sini menyusul di tahap berikutnya. Untuk sekarang, kelola lewat sheet "Brand Sources".</p>
+              <div class="rank-table-wrap">
+                <table class="rank-table">
+                  <thead>
+                    <tr>
+                      <th style="width:50px;">No</th>
+                      <th>Brand Name</th>
+                      <th>Spreadsheet ID / URL</th>
+                      <th>Nama Sheet Content Plan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="homeSourcesBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <footer>Candramawa Apps — Menggabungkan data Content Calendar & Team Performance otomatis lintas brand.</footer>
+      </main>
+    </div>
+
+  </div>
+
+  <!-- MODAL: Daftar konten lengkap per tanggal (dipicu badge "+N" di kalender) -->
+  <div id="dayModalOverlay" class="modal-overlay hidden" onclick="if(event.target===this) closeDayModal()">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="dayModalTitle">📅 Konten</h3>
+        <button class="modal-close-btn" onclick="closeDayModal()">✕</button>
+      </div>
+      <div class="modal-body" id="dayModalBody"></div>
+    </div>
+  </div>
+
+  <!-- MODAL: Form Tambah/Edit Konten -->
+  <div id="contentModalOverlay" class="modal-overlay hidden" onclick="if(event.target===this) closeContentModal()">
+    <div class="modal-box modal-box-wide">
+      <div class="modal-header">
+        <h3 id="contentModalTitle">➕ Tambah Konten</h3>
+        <button class="modal-close-btn" onclick="closeContentModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="contentFormError" class="login-error hidden"></div>
+        <input type="hidden" id="contentFormRow" value="">
+
+        <label class="form-label" for="contentFormBrand">Brand <span class="required">*</span></label>
+        <select id="contentFormBrand" class="form-input"></select>
+
+        <label class="form-label" for="contentFormPublishDate">Publish Date <span class="required">*</span></label>
+        <input type="date" id="contentFormPublishDate" class="form-input">
+
+        <label class="form-label" for="contentFormTitle">Title <span class="required">*</span></label>
+        <input type="text" id="contentFormTitle" class="form-input" placeholder="Judul konten">
+
+        <label class="form-label" for="contentFormStatus">Status</label>
+        <select id="contentFormStatus" class="form-input">
+          <option value="">-</option>
+          <option value="Draft">Draft</option>
+          <option value="Review">Review</option>
+          <option value="Revisi">Revisi</option>
+          <option value="Ready to Post">Ready to Post</option>
+          <option value="Scheduled">Scheduled</option>
+          <option value="Published">Published</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+
+        <label class="form-label" for="contentFormPilar">Content Pilar</label>
+        <input type="text" id="contentFormPilar" class="form-input">
+
+        <label class="form-label" for="contentFormFormat">Format</label>
+        <input type="text" id="contentFormFormat" class="form-input">
+
+        <label class="form-label" for="contentFormChannel">Channel</label>
+        <input type="text" id="contentFormChannel" class="form-input">
+
+        <label class="form-label" for="contentFormReference">Reference</label>
+        <input type="text" id="contentFormReference" class="form-input" placeholder="https://... (opsional)">
+
+        <label class="form-label" for="contentFormBrief">Brief</label>
+        <input type="text" id="contentFormBrief" class="form-input" placeholder="https://...">
+
+        <label class="form-label" for="contentFormOwner">Content Owner</label>
+        <input type="text" id="contentFormOwner" class="form-input" placeholder="Pisahkan koma kalau lebih dari 1">
+
+        <label class="form-label" for="contentFormMultimediaCreator">Multimedia Creator</label>
+        <input type="text" id="contentFormMultimediaCreator" class="form-input" placeholder="Pisahkan koma kalau lebih dari 1">
+
+        <label class="form-label" for="contentFormCaption">Caption</label>
+        <textarea id="contentFormCaption" class="form-input" rows="3" placeholder="Draft caption konten (opsional)"></textarea>
+
+        <label class="form-label" for="contentFormMultimediaAsset">Multimedia Asset</label>
+        <input type="text" id="contentFormMultimediaAsset" class="form-input" placeholder="Link folder Drive / gambar (opsional)">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeContentModal()">Batal</button>
+        <button class="btn-primary" id="contentFormSubmitBtn" onclick="submitContentForm()">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Memanggil JS dari file script.html -->
+  <?!= include('script'); ?>
+</body>
+</html>
