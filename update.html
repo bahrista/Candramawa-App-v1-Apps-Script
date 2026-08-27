@@ -1,0 +1,49 @@
+<!-- ============================================================================
+     UPDATE.HTML — Banner info update/fitur baru, tampil di tab Home setelah card statistik.
+     Dipanggil otomatis dari index.html lewat <?!= include('update'); ?>
+
+     Cara update kontennya nanti: tinggal edit teks di bawah ini langsung.
+     Banner otomatis ketutup permanen per-browser begitu tombol ✕ diklik
+     (disimpan di localStorage). Kalau mau ganti isi banner dan pengen semua
+     orang lihat lagi walau sudah pernah nutup versi lama, ganti angka versi
+     di 'cw_hide_new_feature_banner_v1' (mis. jadi _v2) di 2 tempat di bawah.
+     ============================================================================ -->
+<div id="newFeatureBanner" style="
+    background:linear-gradient(135deg, var(--navy, #1F3864), var(--navy-light, #2E5395));
+    color:#fff; border-radius:var(--radius, 12px); padding:18px 20px;
+    margin-bottom:18px; position:relative; overflow:hidden;
+  ">
+  <button
+    onclick="document.getElementById('newFeatureBanner').style.display='none'; localStorage.setItem('cw_hide_new_feature_banner_v1','1');"
+    style="
+      position:absolute; top:10px; right:12px; background:rgba(255,255,255,0.15);
+      border:none; color:#fff; width:24px; height:24px; border-radius:50%;
+      cursor:pointer; font-size:13px; line-height:1;
+    "
+    title="Mengerti, sembunyikan"
+  >✕</button>
+
+  <div style="display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap;">
+    <div style="font-size:28px; line-height:1;">🎉</div>
+    <div style="flex:1; min-width:220px;">
+      <div style="font-weight:800; font-size:15px; margin-bottom:6px;">
+        Fitur Baru: Tambah, Edit &amp; Hapus Konten
+      </div>
+      <div style="font-size:12.5px; line-height:1.7; color:#E3EAF5;">
+        ➕ Tombol <b>"Tambah Konten"</b> sekarang ada di bagian atas tab <b>Content Calendar</b> — pilih Brand, isi Tanggal &amp; Judul (wajib), sisanya opsional.<br>
+        ✏️ Kolom <b>Edit</b> di tabel Detail Konten — ubah data konten yang sudah ada kapan saja.<br>
+        🗑️ Kolom <b>Hapus</b> di tabel Detail Konten — hapus konten yang gak jadi dipakai.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Kalau sebelumnya sudah pernah ditutup di browser ini, jangan tampilkan lagi.
+  (function(){
+    if (localStorage.getItem('cw_hide_new_feature_banner_v1') === '1') {
+      var el = document.getElementById('newFeatureBanner');
+      if (el) el.style.display = 'none';
+    }
+  })();
+</script>
